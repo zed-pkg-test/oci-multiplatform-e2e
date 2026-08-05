@@ -27,14 +27,14 @@
       "fullName": "zed-pkg/zed-cli",
       "exists": true,
       "branch": "main",
-      "sha": "d0f70105d13ff1d3fddf7671bac50940f14d69a6",
+      "sha": "7977b1d43231a68e1ac34903e0f18cef5135add6",
       "visibility": "public"
     },
     {
       "fullName": "zed-pkg/zed-infra",
       "exists": true,
       "branch": "main",
-      "sha": "59e02d1f7a9a215c7235b91192f007052ec7676f",
+      "sha": "45f03896bbd01944f591ae7e12495e1ee30dda3c",
       "visibility": "public"
     }
   ],
