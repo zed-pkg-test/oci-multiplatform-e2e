@@ -31,13 +31,11 @@ cosign verify \
   "$image_ref" > "$verification"
 
 image_digest="${image_ref##*@}"
-jq -e --arg digest "$image_digest" --arg repository "ghcr.io/zed-pkg/zed-oci" '
+jq -e --arg digest "$image_digest" --arg image_ref "$image_ref" '
   type == "array"
   and length >= 1
-  and all(.[].critical.image["docker-manifest-digest"] == $digest;
-          .)
-  and all(.[].critical.identity["docker-reference"] == $repository;
-          .)
+  and all(.[]; .critical.image["docker-manifest-digest"] == $digest)
+  and all(.[]; .critical.identity["docker-reference"] == $image_ref)
 ' "$verification"
 
 manifest="$(docker buildx imagetools inspect --raw "$image_ref")"
