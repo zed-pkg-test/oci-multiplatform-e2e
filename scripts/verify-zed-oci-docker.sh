@@ -49,12 +49,21 @@ case "$platform" in
   *) echo "unsupported platform: $platform" >&2; exit 64 ;;
 esac
 
+case "$certificate_identity" in
+  *@refs/heads/main) expected_label_version="edge" ;;
+  *@refs/tags/v*) expected_label_version="$expected_version" ;;
+  *) echo "unsupported certificate identity: $certificate_identity" >&2; exit 64 ;;
+esac
+
 manifest="$(docker buildx imagetools inspect --raw "$image_ref")"
-mapfile -t platform_digests < <(jq -r --arg architecture "$architecture" '
-  .manifests[]
-  | select(.platform.os == "linux" and .platform.architecture == $architecture)
-  | .digest
-' <<<"$manifest")
+platform_digests=()
+while IFS= read -r digest; do
+  platform_digests+=("$digest")
+done < <(jq -r --arg architecture "$architecture" '
+    .manifests[]
+    | select(.platform.os == "linux" and .platform.architecture == $architecture)
+    | .digest
+  ' <<<"$manifest")
 if [[ "${#platform_digests[@]}" -ne 1 ]]; then
   echo "expected exactly one $platform image manifest" >&2
   exit 1
@@ -65,7 +74,7 @@ builder_tag="zed-oci-acceptance-builder-${architecture}:verify"
 docker pull --platform "$platform" "$platform_ref"
 docker tag "$platform_ref" "$builder_tag"
 config="$(docker image inspect --format '{{json .Config}}' "$platform_ref")"
-jq -e --arg version "$expected_version" '
+jq -e --arg label_version "$expected_label_version" '
   .User == "10001:10001"
   and .WorkingDir == "/workspace"
   and .Cmd == ["zed", "--help"]
@@ -81,8 +90,7 @@ jq -e --arg version "$expected_version" '
     == "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
   and (.Labels["org.opencontainers.image.revision"] | test("^[0-9a-f]{40}$"))
   and (.Labels["org.opencontainers.image.created"] != "1970-01-01T00:00:00Z")
-  and (.Labels["org.opencontainers.image.version"] == $version
-       or .Labels["org.opencontainers.image.version"] == ("v" + $version))
+  and .Labels["org.opencontainers.image.version"] == $label_version
 ' <<<"$config"
 
 docker run --rm --platform "$platform" --network none --read-only \
@@ -145,8 +153,19 @@ binary_dir="$(mktemp -d)"
 container_id="$(docker create --platform "$platform" "$platform_ref")"
 docker cp "$container_id:/usr/local/bin/zed" "$binary_dir/zed"
 file "$binary_dir/zed"
-if readelf --program-headers "$binary_dir/zed" | grep -q 'Requesting program interpreter'; then
-  echo "zed release binary is dynamically linked" >&2
+if command -v readelf >/dev/null 2>&1; then
+  if readelf --program-headers "$binary_dir/zed" \
+    | grep -q 'Requesting program interpreter'; then
+    echo "zed release binary is dynamically linked" >&2
+    exit 1
+  fi
+elif command -v objdump >/dev/null 2>&1; then
+  if objdump -p "$binary_dir/zed" | grep -Eq '(^|[[:space:]])INTERP([[:space:]]|$)'; then
+    echo "zed release binary is dynamically linked" >&2
+    exit 1
+  fi
+else
+  echo "readelf or objdump is required to verify the Zed ELF interpreter" >&2
   exit 1
 fi
 

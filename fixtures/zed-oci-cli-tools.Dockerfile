@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.26@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 
-ARG ZED_OCI_IMAGE
+ARG ZED_OCI_IMAGE=scratch
 FROM ${ZED_OCI_IMAGE} AS zed-builder
 
 ARG EXPECTED_ZED_VERSION
