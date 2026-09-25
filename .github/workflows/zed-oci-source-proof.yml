@@ -1,0 +1,105 @@
+name: zed-oci exact-source proof
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zed-oci-source-proof.yml
+      - docs/zed-oci-source-proof.md
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Immutable 40-hex commit SHA from public zed-pkg/zed-oci
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zed-oci-source-${{ github.event.pull_request.number || inputs.source_sha || github.ref }}
+  cancel-in-progress: true
+
+env:
+  SELFTEST_SOURCE_SHA: 7ff7ddba962b66612facda4fa69b08ba81498eca
+
+jobs:
+  source-proof:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            architecture: amd64
+          - platform: linux/arm64
+            architecture: arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Resolve immutable source SHA
+        id: source
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="${INPUT_SOURCE_SHA:-$SELFTEST_SOURCE_SHA}"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "source_sha must be an immutable 40-hex commit" >&2
+            exit 64
+          }
+          printf 'sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact public zed-oci source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zed-pkg/zed-oci
+          ref: ${{ steps.source.outputs.sha }}
+          path: subject
+          persist-credentials: false
+          fetch-depth: 1
+          show-progress: false
+          submodules: false
+
+      - name: Prove immutable source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git -C subject rev-parse HEAD)"
+          test "$actual" = "${{ steps.source.outputs.sha }}"
+          {
+            echo '### zed-oci source proof'
+            echo
+            echo "- source: \`zed-pkg/zed-oci@$actual\`"
+            echo "- platform: \`${{ matrix.platform }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8
+        with:
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+        with:
+          driver-opts: image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+
+      - name: Verify source policy and builder-to-runtime canary
+        working-directory: subject
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          NO_DOCKER=1 ./scripts/verify.sh
+          ./scripts/verify.sh
+
+      - name: Reject fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          version: v0.74.0
+          image-ref: zed-oci:verify
+          format: table
+          exit-code: 1
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          scanners: vuln
+          timeout: 10m
